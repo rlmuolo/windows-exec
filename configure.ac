@@ -6251,6 +6251,7 @@ if test "x$ac_system" = "xWindows"; then
   plugin_eventlog="yes"
   plugin_interface="yes"
   plugin_wmi="yes"
+  plugin_exec="yes"
 fi
 
 if test "x$ac_system" = "xOpenBSD"; then

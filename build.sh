@@ -119,7 +119,8 @@ build_windows ()
 	      poll \
 	      recv \
 	      net_if \
-          fnmatch
+          fnmatch \
+		  unistd
 
 	  cd ${TOP_SRCDIR}/_build_aux/_gnulib
 	  ./configure --host="mingw32" LIBS="-lws2_32 -lpthread"
@@ -159,7 +160,8 @@ build_windows ()
 	  --enable-network \
 	  --enable-target_replace \
 	  --enable-target_set \
-	  --enable-wmi
+	  --enable-wmi \
+	  --enable-exec
 
 	cp ${GNULIB_DIR}/../config.h src/gnulib_config.h
 	echo "#include <config.h.in>" >> src/gnulib_config.h
