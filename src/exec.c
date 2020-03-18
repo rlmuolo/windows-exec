@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <tchar.h>
 #include <processthreadsapi.h>
+#include <synchapi.h>
 #else
 #include <grp.h>
 #include <pwd.h>
@@ -78,6 +79,7 @@ struct program_list_s {
   int status;
   int flags;
   HANDLE hProcess;
+  HANDLE hThread;
   program_list_t *next;
 };
 #else
@@ -111,24 +113,32 @@ static pthread_mutex_t pl_lock = PTHREAD_MUTEX_INITIALIZER;
 #ifdef WIN32
 static void process_status( HANDLE hProcess, DWORD pid)
 {
+  program_list_t *pl;
+  pl = calloc(1, sizeof(*pl));
+  HANDLE hThread = pl->hThread;
   DWORD status;
+  INFO("Waiting for %ld", pid);
   status = WaitForSingleObject(hProcess, INFINITE);
+  INFO("Waiting for %ld", pid);
   switch (status)
   {
     case WAIT_ABANDONED:
-      printf("Owning process terminated without releasing mutex object");
+      INFO("Owning process terminated without releasing mutex object");
       break;
     case WAIT_OBJECT_0:
-      printf("The child thread state was signaled");
+      INFO("The child thread state was signaled");
       break;
     case WAIT_TIMEOUT:
-      printf("Wait timeout reached");
+      INFO("Wait timeout reached");
       break;
     case WAIT_FAILED:
-      printf("Execution has failed %lu\n", GetLastError());
+      INFO("Execution has failed %lu\n", GetLastError());
       break;
   }
+  INFO("status is %ld", status);
   CloseHandle(hProcess);
+  CloseHandle(hThread);
+  INFO("Handles closed");
 }
 static void kill_process(HANDLE hProcess)
 {
@@ -166,6 +176,8 @@ static int exec_config_exec(oconfig_item_t *ci) /* {{{ */
     WARNING("exec plugin: The config option `%s' may not be a block.", ci->key);
     return -1;
   }
+  // TODO: Allow win_exec to accept one option - current solution doesn't seem to work.
+#ifndef WIN32
   if (ci->values_num < 2) {
     WARNING("exec plugin: The config option `%s' needs at least two "
             "arguments.",
@@ -179,6 +191,20 @@ static int exec_config_exec(oconfig_item_t *ci) /* {{{ */
             ci->key);
     return -1;
   }
+#else
+	if (ci->values_num < 1) {
+		WARNING("exec plugin: The config option '%s' needs at least one "
+				"argument.",
+				ci->key);
+		return -1;
+	}
+	if ((ci->values[0].type != OCONFIG_TYPE_STRING)) {
+		WARNING("exec plugin: The first two arguments to the '%s' option must "
+				"be string arguments.",
+				ci->key);
+		return -1;
+	}
+#endif
 
   pl = calloc(1, sizeof(*pl));
   if (pl == NULL) {
@@ -209,7 +235,12 @@ static int exec_config_exec(oconfig_item_t *ci) /* {{{ */
 	if (pl->hProcess == NULL) {
 		sfree(pl->hProcess);
 		sfree(pl);
-	}		
+	}
+	pl->hThread = strdup(buffer);
+	if (pl->hThread == NULL) {
+		sfree(pl->hThread);
+		sfree(pl);
+	}
 #endif
   pl->exec = strdup(ci->values[1].value.string);
   if (pl->exec == NULL) {
@@ -333,8 +364,10 @@ static void set_environment(void) /* {{{ */
 } /* }}} void set_environment */
 
 #ifdef WIN32
+// TODO: remove need for second parameter.
 DWORD win_exec(char *argc, TCHAR *argv[])
 {
+  INFO("Attempting to execute win_exec with argv %s", argv[0]);
   STARTUPINFO si;
   PROCESS_INFORMATION pi;
   DWORD pid;
@@ -342,7 +375,7 @@ DWORD win_exec(char *argc, TCHAR *argv[])
   si.cb = sizeof(si);
   program_list_t *pl;
   if (!CreateProcess(NULL,
-                     argv[1],
+                     argv[0],
                      NULL,
                      NULL,
                      FALSE,
@@ -353,13 +386,14 @@ DWORD win_exec(char *argc, TCHAR *argv[])
                      &pi)
       )
   {
-    printf("CreateProcess failed %ld.\n", GetLastError());
+    ERROR("CreateProcess failed %ld.\n", GetLastError());
   }
   // initializing first or else it gets mad at me
-  pl = 0;
+  pl = calloc(1, sizeof(*pl));
   pl->hProcess = pi.hProcess;
+  pl->hThread = pi.hThread;
   pid = GetProcessId(pi.hProcess);
-  printf("Process id is %ld.\n", pid);
+  INFO("Process id is %ld.\n", pid);
   process_status(pi.hProcess, pid);
   return pid;
 }
@@ -411,6 +445,7 @@ __attribute__((noreturn)) static void exec_child(program_list_t *pl, int uid,
 #else
   program_list_t *pl;
 
+// TODO: Remove pl->exec
   win_exec(pl->exec, pl->argv);
 #endif
   ERROR("exec plugin: Failed to execute ``%s'': %s", pl->exec, STRERRNO);
@@ -456,8 +491,9 @@ static void close_pipe(int fd_pipe[2]) /* {{{ */
  * the child and fd_out is connected to STDOUT and fd_err is connected to STDERR
  * of the child. Then is calls `exec_child'.
  */
+
 static int fork_child(program_list_t *pl, int *fd_in, int *fd_out,
-                      int *fd_err) /* {{{ */
+                      int *fd_err)  /* {{{ */
 {
   int fd_pipe_in[2] = {-1, -1};
   int fd_pipe_out[2] = {-1, -1};
@@ -558,24 +594,29 @@ static int fork_child(program_list_t *pl, int *fd_in, int *fd_out,
       close(fd);
     }
 #endif
+	printf("Connecting to the stdin pipe\r\n");
     /* Connect the `in' pipe to STDIN */
     if (fd_pipe_in[0] != STDIN_FILENO) {
       dup2(fd_pipe_in[0], STDIN_FILENO);
       close(fd_pipe_in[0]);
     }
-
+	printf("Connected to the stdin pipe\r\n");
+	printf("Connecting to the stdout pipe\r\n");
     /* Now connect the `out' pipe to STDOUT */
     if (fd_pipe_out[1] != STDOUT_FILENO) {
       dup2(fd_pipe_out[1], STDOUT_FILENO);
       close(fd_pipe_out[1]);
     }
+	INFO("Connected to the stdout pipe\r\n");
 
+	INFO("Attempting to connect to stderr pipe");
     /* Now connect the `err' pipe to STDERR */
     if (fd_pipe_err[1] != STDERR_FILENO) {
       dup2(fd_pipe_err[1], STDERR_FILENO);
       close(fd_pipe_err[1]);
     }
-
+	INFO("Connected to stderr pipe");
+	INFO("Setting environment\r\n");
     set_environment();
 #ifndef WIN32
     /* Unblock all signals */
@@ -584,6 +625,7 @@ static int fork_child(program_list_t *pl, int *fd_in, int *fd_out,
     exec_child(pl, uid, gid, egid);
     /* does not return */
 #else
+	INFO("Executing win_exec pl->exec: %s", pl->exec);
 	pid = win_exec(pl->exec, pl->argv);
 #endif
 
@@ -612,6 +654,7 @@ failed:
   close_pipe(fd_pipe_in);
   close_pipe(fd_pipe_out);
   close_pipe(fd_pipe_err);
+
   return -1;
 } /* int fork_child }}} */
 
@@ -774,7 +817,7 @@ static void *exec_read_one(void *arg) /* {{{ */
   return NULL;
 } /* void *exec_read_one }}} */
 #else
-static int *exec_read_one(void *arg) /* {{{ */
+static void *exec_read_one(void *arg) /* {{{ */
 {
   program_list_t *pl = (program_list_t *)arg;
   int fd, fd_err, highest_fd;
@@ -784,22 +827,28 @@ static int *exec_read_one(void *arg) /* {{{ */
   char buffer_err[1024];
   char *pbuffer = buffer;
   char *pbuffer_err = buffer_err;
-
+// TODO: remove this
+  printf("I made it to exec_read_one before fork_child/r/n");
   status = fork_child(pl, NULL, &fd, &fd_err);
+// TODO: Remove this as well
+  printf("status is %d/n", status);
   if (status < 0) {
     /* Reset the "running" flag */
 	pl->flags &= ~PL_RUNNING;
   }
   pl->pid = status;
+// TODO: Remove this
+  printf("pl->pid is %ld/r/n", pl->pid);
 
-  assert(pl->pid != 0);
 
   FD_ZERO(&fdset);
   FD_SET(fd, &fdset);
   FD_SET(fd_err, &fdset);
 
   /* Determine the highest file descriptor */
+
   highest_fd = (fd > fd_err) ? fd : fd_err;
+
 
   /* We use a copy of fdset, as select modifies it */
   copy = fdset;
@@ -909,7 +958,7 @@ static int *exec_read_one(void *arg) /* {{{ */
     close(fd_err);
 
   pthread_exit((void *)0);
-return 0;
+return NULL;
 } /* void *exec_read_one }}} */
 #endif
 
@@ -1035,6 +1084,12 @@ static int exec_read(void) /* {{{ */
 #ifndef WIN32
 	pthread_t t;
     pthread_attr_t attr;
+#else
+	HANDLE t = pl->hThread;
+	void *threadptr = &t;
+	long long unsigned int *inttptr = threadptr;
+	long long unsigned int thread = *inttptr;
+	
 #endif
 
     /* Only execute `normal' style executables here. */
@@ -1059,13 +1114,12 @@ static int exec_read(void) /* {{{ */
     int status =
         plugin_thread_create(&t, &attr, exec_read_one, (void *)pl, "exec read");
 #else
-	int *status = (int *)exec_read_one;
+	int status = plugin_thread_create(&thread, NULL, exec_read_one, (void *)pl, "exec read");
+	printf("status is %d/n in exec_read", status);
 #endif
     if (status != 0) {
       ERROR("exec plugin: plugin_thread_create failed.");
-    } else {
-		printf("Yayyyyyyyyyyy");
-	}
+    }
 #ifndef WIN32
     pthread_attr_destroy(&attr);
 #endif
@@ -1135,7 +1189,7 @@ static int exec_shutdown(void) /* {{{ */
 #else
 	if (pl->pid > 0) {
 		kill_process(pl->hProcess);
-		INFO("exec plugin: Wasted.");
+		INFO("exec plugin: Terminating process.");
 	}
 #endif
     sfree(pl);

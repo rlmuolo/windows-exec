@@ -1,6 +1,6 @@
 #! /bin/sh
-# Generated automatically by config.status (collectd) 5.6.0.1342.g601f72b+
-# Libtool was configured on host collectd-cygwin-test:
+# Generated automatically by config.status (collectd) 5.8.0.git
+# Libtool was configured on host muolo0-w:
 # NOTE: Changes made to this file will be lost: look at ltmain.sh.
 
 # Provide generalized library-building support services.
@@ -165,7 +165,7 @@ lock_old_archive_extraction=no
 LTCC="x86_64-w64-mingw32-gcc"
 
 # LTCC compiler flags.
-LTCFLAGS="-Drestrict=__restrict -I/home/muolo/collectd_exec_may_work/_build_aux/_gnulib/gllib"
+LTCFLAGS="-Drestrict=__restrict -I/home/muolo/windows-exec/_build_aux/_gnulib/gllib"
 
 # Take the output of nm and produce a listing of raw symbols and C names.
 global_symbol_pipe="sed -n -e 's/^.*[	 ]\\([ABCDGIRSTW][ABCDGIRSTW]*\\)[	 ][	 ]*\\([_A-Za-z][_A-Za-z0-9]*\\)\$/\\1 \\2 \\2/p' | sed '/ __gnu_lto/d'"

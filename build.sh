@@ -72,7 +72,7 @@ build_windows ()
 
 	set -e
 
-	: ${INSTALL_DIR:="C:/PROGRA~1/collectd"}
+	: ${INSTALL_DIR:="C:/PROGRA~1/Google/monitoring_at_corp/Collectd"}
 	: ${LIBDIR:="${INSTALL_DIR}"}
 	: ${BINDIR:="${INSTALL_DIR}"}
 	: ${SBINDIR:="${INSTALL_DIR}"}
